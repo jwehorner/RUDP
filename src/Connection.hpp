@@ -16,6 +16,7 @@
 // Standard Libraries
 #include <array>
 #include <iostream>
+#include <map>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -42,8 +43,8 @@ namespace rudp
         int timeout_ms;
         /// Sequence number of the message that the connection is currently sending.
         uint16_t sequence_send;
-        /// Sequence number of the message that the connection is currently receiving.
-        uint16_t sequence_recv;
+        /// Map of senders to their receive sequence numbers.
+        std::map<std::string, uint16_t> sequence_recv_map;
 
         /// Boost IO service for networking.
         boost::asio::io_service io_service;
@@ -99,7 +100,7 @@ namespace rudp
         void setEndpointRemote(std::string address, unsigned short port);
 
         /**
-         * @brief Method resetConnectionReceive resets the sequence number of the receive channel to 0.
+         * @brief Method resetConnectionReceive resets the sequence number of all the receive channels.
          */
         void resetConnectionReceive();
 

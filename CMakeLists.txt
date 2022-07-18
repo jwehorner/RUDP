@@ -21,7 +21,7 @@ target_include_directories(rudp PUBLIC ${includes_list_lib})
 target_link_libraries(rudp ${Boost_LIBRARIES})
 
 # Test Definition
-# add_compile_definitions(DEBUG)
+add_compile_definitions(DEBUG)
 set(includes_list_test "${CMAKE_SOURCE_DIR}/include")
 
 add_executable(test_send "test/test_send.c")

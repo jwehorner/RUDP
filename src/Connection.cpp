@@ -20,7 +20,7 @@ using namespace rudp;
 Connection::Connection(int timeout_ms) : timeout_ms(timeout_ms)
 {
 	// Initialise the members and open the socket, throwing an error on failure.
-	sequence_recv = 0;
+	sequence_recv_map = std::map<std::string, uint16_t>();
 	sequence_send = 0;
 	has_endpoint_local = false;
 	has_endpoint_remote = false;
@@ -56,7 +56,7 @@ void Connection::setEndpointLocal(unsigned short port)
 	}
 	catch (boost::system::system_error error)
 	{
-		std::string error_message = std::string("[RUDP] (ERROR) [INIT] Error setting local endpoint: ") + error.what();
+		std::string error_message = "[RUDP] (ERROR) [INIT] Error setting local endpoint to port " + std::to_string(port) +  ": " + error.what();
 		throw std::runtime_error(error_message);
 	}
 
@@ -89,11 +89,13 @@ void Connection::setEndpointRemote(std::string address, unsigned short port)
 #endif
 }
 
-void Connection::resetConnectionReceive() {
-	sequence_recv = 0;
+void Connection::resetConnectionReceive()
+{
+	sequence_recv_map.clear();
 }
 
-void Connection::resetConnectionSend() {
+void Connection::resetConnectionSend()
+{
 	sequence_send = 0;
 }
 
@@ -202,15 +204,16 @@ int Connection::receive(char *buf, int len, char *address, int *port)
 	// Throw an error if the local endpoint is unknown.
 	if (!has_endpoint_local)
 	{
-		std::string error_message = "[RUDP] (ERROR) [RECV] (SEQ-RECV: " + std::to_string(sequence_recv) + ") Error receiving packet: No local endpoint set.\n";
+		std::string error_message = "[RUDP] (ERROR) [RECV] Error receiving packet: No local endpoint set.\n";
 		throw std::runtime_error(error_message);
 	}
 	else
 	{
 		boost::system::error_code err;
 		boost::asio::ip::udp::endpoint endpoint_sender;
+		std::string sender_id;
 
-		std::vector<char> buffer(sizeof(sequence_recv) + sizeof(int) + len);
+		std::vector<char> buffer(sizeof(uint16_t) + sizeof(int) + len);
 		std::vector<char> char_cache;
 		int offset;
 
@@ -224,7 +227,7 @@ int Connection::receive(char *buf, int len, char *address, int *port)
 		}
 		catch (boost::system::system_error error)
 		{
-			std::string error_message = std::string("[RUDP] (ERROR) [RECV] (SEQ-RECV: " + std::to_string(sequence_recv) + ") Error setting receive timeout: ") + error.what();
+			std::string error_message = std::string("[RUDP] (ERROR) [RECV] Error setting receive timeout: ") + error.what();
 			throw std::runtime_error(error_message);
 		}
 
@@ -240,10 +243,17 @@ int Connection::receive(char *buf, int len, char *address, int *port)
 			int packet_size = socket.receive_from(boost::asio::buffer(buffer, buffer.capacity()), endpoint_sender, 0, err);
 			if (err.value() != 0)
 			{
-				std::string error_message = "[RUDP] (ERROR) [RECV] (SEQ-RECV: " + std::to_string(sequence_recv) + ") Error in receiving packet from " + endpoint_sender.address().to_string() + ":" + std::to_string(endpoint_sender.port()) + " with error: " + err.what() + "\n";
+				std::string error_message = "[RUDP] (ERROR) [RECV] (SEQ-RECV: Error in receiving packet from " + endpoint_sender.address().to_string() + ":" + std::to_string(endpoint_sender.port()) + " with error: " + err.what() + "\n";
 				std::cout << error_message;
 				error_occured = true;
 			}
+			sender_id = endpoint_sender.address().to_string() + ":" + std::to_string(endpoint_sender.port());
+			if (sequence_recv_map.find(sender_id) == sequence_recv_map.end())
+			{
+				sequence_recv_map[sender_id] = 0;
+			}
+			uint16_t sequence_recv = sequence_recv_map[sender_id];
+
 #ifdef DEBUG
 			std::string message = "[RUDP] (DEBUG) [RECV] (SEQ-RECV: " + std::to_string(sequence_recv) + ") Received " + std::to_string(packet_size) + " bytes from " + endpoint_sender.address().to_string() + ":" + std::to_string(endpoint_sender.port()) + "\n";
 			std::cout << message;
@@ -341,7 +351,7 @@ int Connection::receive(char *buf, int len, char *address, int *port)
 			continue_receiving = error_occured || (received_sequence != sequence_recv);
 		}
 		// Once the correct message has been received increment the receive sequence number.
-		sequence_recv = (sequence_recv + 1) % USHRT_MAX;
+		sequence_recv_map[sender_id] = (sequence_recv_map[sender_id] + 1) % USHRT_MAX;
 		return received_len;
 	}
 }
