@@ -1,0 +1,8 @@
+#ifndef RUDP_MACROS
+#define RUDP_MACROS
+
+#define IPV4_ADDRESS_LENGTH_BYTES 16
+
+#define DEFAULT_TIMEOUT_MS 100
+
+#endif
