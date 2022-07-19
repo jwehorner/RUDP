@@ -65,7 +65,7 @@ namespace rudp
 
         void check_deadline();
 
-        static void handle_receive(const boost::system::error_code &err, std::size_t length, boost::system::error_code *err_out, std::size_t *length_out, bool *cancelled);
+        void handle_receive(const boost::system::error_code &err, std::size_t length, boost::system::error_code *err_out, std::size_t *length_out);
 
     public:
         /**

@@ -179,11 +179,11 @@ int Connection::send(const char *buf, int len)
 			// used as a callback will update the ec and length variables.
 			socket.async_receive(boost::asio::buffer(buffer, sizeof(received_sequence)),
 								boost::bind(&Connection::handle_receive, 
+									this,
 									boost::asio::placeholders::error,
 									boost::asio::placeholders::bytes_transferred,
 									&err,
-									&length,
-									&cancelled
+									&length
 								)
 							);
 
@@ -192,15 +192,17 @@ int Connection::send(const char *buf, int len)
 			// 	io_service.run_one();
 			// while (!cancelled);
 
+			io_service.restart();
 			io_service.run_until(std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms));
+			// std::cout << io_service.stopped() << std::endl;
 			if (length <= 0)
 			{
 				// If the socket timed out just send the packet again and wait for an ACK.
 				ack_received = false;
-#ifdef DEBUG
-				message = "[RUDP] (DEBUG) [SEND] (SEQ-SEND: " + std::to_string(sequence_send) + ") Error thrown when receiving ACK from " + endpoint_remote.address().to_string() + ":" + std::to_string(endpoint_remote.port()) + " with error: " + err.what() + "\n";
-				std::cout << message;
-#endif
+// #ifdef DEBUG
+// 				message = "[RUDP] (DEBUG) [SEND] (SEQ-SEND: " + std::to_string(sequence_send) + ") Error thrown when receiving ACK from " + endpoint_remote.address().to_string() + ":" + std::to_string(endpoint_remote.port()) + " with error: " + err.what() + "\n";
+// 				std::cout << message;
+// #endif
 			}
 			else
 			{
@@ -410,11 +412,11 @@ void Connection::check_deadline()
 	timer.async_wait(boost::bind(&Connection::check_deadline, this));
 }
 
-void Connection::handle_receive(const boost::system::error_code &err, std::size_t length, boost::system::error_code *err_out, std::size_t *length_out, bool *cancelled)
+void Connection::handle_receive(const boost::system::error_code &err, std::size_t length, boost::system::error_code *err_out, std::size_t *length_out)
 {
 	*err_out = err;
 	*length_out = length;
-	*cancelled = (length <= 0);
+	io_service.stop();
 }
 
 #endif /* CONNECTION_CPP */
