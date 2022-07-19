@@ -24,6 +24,15 @@ Connection::Connection(int timeout_ms) : timeout_ms(timeout_ms)
 	sequence_send = 0;
 	has_endpoint_local = false;
 	has_endpoint_remote = false;
+
+	// No deadline is required until the first socket operation is started. We
+	// set the deadline to positive infinity so that the actor takes no action
+	// until a specific deadline is set.
+	timer.expires_at(boost::posix_time::pos_infin);
+
+	// Start the persistent actor that checks for deadline expiry.
+	check_deadline();
+
 	try
 	{
 		socket.open(boost::asio::ip::udp::v4());
@@ -56,7 +65,7 @@ void Connection::setEndpointLocal(unsigned short port)
 	}
 	catch (boost::system::system_error error)
 	{
-		std::string error_message = "[RUDP] (ERROR) [INIT] Error setting local endpoint to port " + std::to_string(port) +  ": " + error.what();
+		std::string error_message = "[RUDP] (ERROR) [INIT] Error setting local endpoint to port " + std::to_string(port) + ": " + error.what();
 		throw std::runtime_error(error_message);
 	}
 
@@ -152,19 +161,38 @@ int Connection::send(const char *buf, int len)
 			std::cout << message;
 #endif
 
-			// Receive an ACK from the remote endpoint
+			// Set a deadline for the asynchronous operation.
+			timer.expires_from_now(boost::posix_time::milliseconds(timeout_ms));
+
+			// Set up the variables that receive the result of the asynchronous
+			// operation. The error code is set to would_block to signal that the
+			// operation is incomplete. Asio guarantees that its asynchronous
+			// operations will never fail with would_block, so any other value in
+			// ec indicates completion.
+			boost::system::error_code err = boost::asio::error::would_block;
+			std::size_t length = 0;
+			bool cancelled = false;
+
 			unsigned short received_sequence;
 			char *buffer = new char[sizeof(received_sequence)];
-			int packet_size = socket.receive_from(boost::asio::buffer(buffer, sizeof(buffer)), endpoint_remote, 0, err);
-			if (err.value() != 0 && err.value() != boost::asio::error::timed_out && err.value() != boost::asio::error::connection_reset)
-			{
-				std::string error_message = "[RUDP] (ERROR) [SEND] (SEQ-SEND: " + std::to_string(sequence_send) + ") Error receiving ACK from " + endpoint_remote.address().to_string() + ":" + std::to_string(endpoint_remote.port()) + " with error: " + err.what() + "\n";
-				throw std::runtime_error(error_message);
-			}
-			else if (
-				packet_size <= 0 ||
-				err.value() == boost::asio::error::timed_out ||
-				err.value() == boost::asio::error::connection_reset)
+			// Start the asynchronous operation itself. The handle_receive function
+			// used as a callback will update the ec and length variables.
+			socket.async_receive(boost::asio::buffer(buffer, sizeof(received_sequence)),
+								boost::bind(&Connection::handle_receive, 
+									boost::asio::placeholders::error,
+									boost::asio::placeholders::bytes_transferred,
+									&err,
+									&length,
+									&cancelled
+								)
+							);
+
+			// Block until the asynchronous operation has completed.
+			do
+				io_service.run_one();
+			while (!cancelled);
+
+			if (length <= 0 || cancelled)
 			{
 				// If the socket timed out just send the packet again and wait for an ACK.
 				ack_received = false;
@@ -354,6 +382,40 @@ int Connection::receive(char *buf, int len, char *address, int *port)
 		sequence_recv_map[sender_id] = (sequence_recv_map[sender_id] + 1) % USHRT_MAX;
 		return received_len;
 	}
+}
+
+void Connection::check_deadline()
+{
+	// Check whether the deadline has passed. We compare the deadline against
+	// the current time since a new asynchronous operation may have moved the
+	// deadline before this actor had a chance to run.
+	if (timer.expires_at() <= boost::asio::deadline_timer::traits_type::now())
+	{
+		std::cout << "Cancelling." << std::endl;
+		// The deadline has passed. The outstanding asynchronous operation needs
+		// to be cancelled so that the blocked receive() function will return.
+		//
+		// Please note that cancel() has portability issues on some versions of
+		// Microsoft Windows, and it may be necessary to use close() instead.
+		// Consult the documentation for cancel() for further information.
+		// boost::system::error_code err = boost::asio::error::operation_aborted;
+		socket.cancel();
+
+		// There is no longer an active deadline. The expiry is set to positive
+		// infinity so that the actor takes no action until a new deadline is set.
+		timer.expires_at(boost::posix_time::pos_infin);
+	}
+
+	// Put the actor back to sleep.
+	timer.async_wait(boost::bind(&Connection::check_deadline, this));
+}
+
+void Connection::handle_receive(const boost::system::error_code &err, std::size_t length, boost::system::error_code *err_out, std::size_t *length_out, bool *cancelled)
+{
+	std::cout << err.what() << std::endl;
+	*err_out = err;
+	*length_out = length;
+	*cancelled = (err == boost::asio::error::operation_aborted);
 }
 
 #endif /* CONNECTION_CPP */

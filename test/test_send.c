@@ -4,7 +4,7 @@
 
 int main() {
 	errno_t error;
-	int connection_number = rudp_make_connection(DEFAULT_TIMEOUT_MS, &error);
+	int connection_number = rudp_make_connection(5000, &error);
 	if (error) {
 		printf("Could not open connection.\n");
 		return error;
