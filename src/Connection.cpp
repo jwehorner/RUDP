@@ -162,7 +162,7 @@ int Connection::send(const char *buf, int len)
 #endif
 
 			// Set a deadline for the asynchronous operation.
-			timer.expires_from_now(boost::posix_time::milliseconds(timeout_ms));
+			// timer.expires_from_now(boost::posix_time::milliseconds(timeout_ms));
 
 			// Set up the variables that receive the result of the asynchronous
 			// operation. The error code is set to would_block to signal that the
@@ -188,11 +188,12 @@ int Connection::send(const char *buf, int len)
 							);
 
 			// Block until the asynchronous operation has completed.
-			do
-				io_service.run_one();
-			while (!cancelled);
+			// do
+			// 	io_service.run_one();
+			// while (!cancelled);
 
-			if (length <= 0 || cancelled)
+			io_service.run_until(std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms));
+			if (length <= 0)
 			{
 				// If the socket timed out just send the packet again and wait for an ACK.
 				ack_received = false;
@@ -391,7 +392,6 @@ void Connection::check_deadline()
 	// deadline before this actor had a chance to run.
 	if (timer.expires_at() <= boost::asio::deadline_timer::traits_type::now())
 	{
-		std::cout << "Cancelling." << std::endl;
 		// The deadline has passed. The outstanding asynchronous operation needs
 		// to be cancelled so that the blocked receive() function will return.
 		//
@@ -412,10 +412,9 @@ void Connection::check_deadline()
 
 void Connection::handle_receive(const boost::system::error_code &err, std::size_t length, boost::system::error_code *err_out, std::size_t *length_out, bool *cancelled)
 {
-	std::cout << err.what() << std::endl;
 	*err_out = err;
 	*length_out = length;
-	*cancelled = (err == boost::asio::error::operation_aborted);
+	*cancelled = (length <= 0);
 }
 
 #endif /* CONNECTION_CPP */
