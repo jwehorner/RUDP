@@ -77,7 +77,7 @@ void test_basic_connection_recv_thread(bool *success)
 		char *address_buffer = new char[IPV4_ADDRESS_LENGTH_BYTES];
 		int port;
 		connection_recv.receive(recv_buffer, 64, address_buffer, &port);
-		Sleep(1000);
+		std::this_thread::sleep_for(std::chrono::seconds(1));
 		connection_recv.receive(recv_buffer, 64, address_buffer, &port);
 		*success = true;
 	}
@@ -134,7 +134,7 @@ void test_basic_controller_recv_thread(bool *success, ConnectionController *cont
 		char *address_buffer = new char[IPV4_ADDRESS_LENGTH_BYTES];
 		int port;
 		connection_recv->receive(recv_buffer, 64, address_buffer, &port);
-		Sleep(1000);
+		std::this_thread::sleep_for(std::chrono::seconds(1));
 		connection_recv->receive(recv_buffer, 64, address_buffer, &port);
 		*success = true;
 	}
@@ -153,7 +153,7 @@ int test_out_of_sync_connection()
 	thread thread_recv(test_out_of_sync_connection_recv_thread, &recv_successful);
 	thread thread_send_1(test_out_of_sync_connection_send_thread, &send_successful);
 	thread_send_1.join();
-	Sleep(5000);
+	std::this_thread::sleep_for(std::chrono::seconds(5));
 	thread thread_send_2(test_out_of_sync_connection_send_thread, &recv_successful);
 	thread_send_2.join();
 	thread_recv.join();
