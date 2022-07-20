@@ -125,17 +125,6 @@ int Connection::send(const char *buf, int len)
 
 		bool ack_received = false;
 
-		// Try setting the socket timeout to the one specified in the constructor.
-		try
-		{
-			socket.set_option(boost::asio::detail::socket_option::integer<SOL_SOCKET, SO_RCVTIMEO>{timeout_ms});
-		}
-		catch (boost::system::system_error error)
-		{
-			std::string error_message = std::string("[RUDP] (ERROR) [SEND] (SEQ-SEND: " + std::to_string(sequence_send) + ") Error setting receive timeout on socket: ") + error.what();
-			throw std::runtime_error(error_message);
-		}
-
 		// Write the input data to a stringstream to the string into a byte array.
 		bytestream.write(static_cast<char *>(static_cast<void *>(&sequence_send)), sizeof(sequence_send));
 		bytestream.write(static_cast<char *>(static_cast<void *>(&len)), sizeof(len));
@@ -153,7 +142,7 @@ int Connection::send(const char *buf, int len)
 			sent_size = socket.send_to(boost::asio::buffer(bytestream.str()), endpoint_remote, 0, err);
 			if (err.value() != 0)
 			{
-				std::string error_message = "[RUDP] (ERROR) [SEND] (SEQ-SEND: " + std::to_string(sequence_send) + ") Error in sending packet to " + endpoint_remote.address().to_string() + ":" + std::to_string(endpoint_remote.port()) + " with error: " + err.what() + "\n";
+				std::string error_message = "[RUDP] (ERROR) [SEND] (SEQ-SEND: " + std::to_string(sequence_send) + ") Error in sending packet to " + endpoint_remote.address().to_string() + ":" + std::to_string(endpoint_remote.port()) + " with error: " + err.message() + "\n";
 				throw std::runtime_error(error_message);
 			}
 #ifdef DEBUG
@@ -206,7 +195,7 @@ int Connection::send(const char *buf, int len)
 			else
 			{
 				// If no errors occured and the socket didn't timeout, try to compare the received sequence number to the current sequence number.
-				if (memcpy_s(&received_sequence, sizeof(received_sequence), buffer, sizeof(received_sequence)))
+				if (!memcpy(&received_sequence, buffer, sizeof(received_sequence)))
 				{
 					std::string error_message = "[RUDP] (ERROR) [SEND] (SEQ-SEND: " + std::to_string(sequence_send) + ") Error copying ACK sequence number received from " + endpoint_remote.address().to_string() + ":" + std::to_string(endpoint_remote.port()) + "\n";
 					std::cout << error_message;
@@ -250,17 +239,6 @@ int Connection::receive(char *buf, int len, char *address, int *port)
 		int received_len;
 		unsigned short received_sequence;
 
-		// Try setting the socket timeout to infinite.
-		try
-		{
-			socket.set_option(boost::asio::detail::socket_option::integer<SOL_SOCKET, SO_RCVTIMEO>{0});
-		}
-		catch (boost::system::system_error error)
-		{
-			std::string error_message = std::string("[RUDP] (ERROR) [RECV] Error setting receive timeout: ") + error.what();
-			throw std::runtime_error(error_message);
-		}
-
 		bool continue_receiving = true;
 
 		// While a message with the correct sequence number has not been received without errors.
@@ -273,7 +251,7 @@ int Connection::receive(char *buf, int len, char *address, int *port)
 			int packet_size = socket.receive_from(boost::asio::buffer(buffer, buffer.capacity()), endpoint_sender, 0, err);
 			if (err.value() != 0)
 			{
-				std::string error_message = "[RUDP] (ERROR) [RECV] (SEQ-RECV: Error in receiving packet from " + endpoint_sender.address().to_string() + ":" + std::to_string(endpoint_sender.port()) + " with error: " + err.what() + "\n";
+				std::string error_message = "[RUDP] (ERROR) [RECV] (SEQ-RECV: Error in receiving packet from " + endpoint_sender.address().to_string() + ":" + std::to_string(endpoint_sender.port()) + " with error: " + err.message() + "\n";
 				std::cout << error_message;
 				error_occured = true;
 			}
@@ -297,7 +275,7 @@ int Connection::receive(char *buf, int len, char *address, int *port)
 					char_cache[i] = buffer[i + offset];
 				}
 				offset += sizeof(received_sequence);
-				if (memcpy_s(&received_sequence, sizeof(received_sequence), char_cache.data(), sizeof(received_sequence)))
+				if (!memcpy(&received_sequence, char_cache.data(), sizeof(received_sequence)))
 				{
 					std::string error_message = "[RUDP] (ERROR) [RECV] (SEQ-RECV: " + std::to_string(sequence_recv) + ") Error copying message sequence number received from " + endpoint_sender.address().to_string() + ":" + std::to_string(endpoint_sender.port()) + "\n";
 					std::cout << error_message;
@@ -314,7 +292,7 @@ int Connection::receive(char *buf, int len, char *address, int *port)
 					char_cache[i] = buffer[i + offset];
 				}
 				offset += sizeof(int);
-				if (memcpy_s(&received_len, sizeof(received_len), char_cache.data(), sizeof(int)))
+				if (!memcpy(&received_len, char_cache.data(), sizeof(received_len)))
 				{
 					std::string error_message = "[RUDP] (ERROR) [RECV] (SEQ-RECV: " + std::to_string(sequence_recv) + ") Error copying length of message received from " + endpoint_sender.address().to_string() + ":" + std::to_string(endpoint_sender.port()) + "\n";
 					std::cout << error_message;
@@ -340,7 +318,7 @@ int Connection::receive(char *buf, int len, char *address, int *port)
 				}
 				offset += received_len;
 				// Copy the received data into the output buffer.
-				if (memcpy_s(buf, len, char_cache.data(), received_len))
+				if (!memcpy(buf, char_cache.data(), len))
 				{
 					std::string error_message = "[RUDP] (ERROR) [RECV] (SEQ-RECV: " + std::to_string(sequence_recv) + ") Error copying message buffer received from " + endpoint_sender.address().to_string() + ":" + std::to_string(endpoint_sender.port()) + "\n";
 					throw std::runtime_error(error_message);
@@ -351,14 +329,14 @@ int Connection::receive(char *buf, int len, char *address, int *port)
 			{
 				// Copy the information about where the packet came from.
 				*port = (int)endpoint_sender.port();
-				strcpy_s(address, IPV4_ADDRESS_LENGTH_BYTES, endpoint_sender.address().to_string().c_str());
+				strcpy(address, endpoint_sender.address().to_string().c_str());
 			}
 
 			// If no errors occured send an ACK for the message with the sequence number that was received.
 			if (!error_occured && received_sequence <= sequence_recv)
 			{
 				char *ack_buffer = new char[sizeof(unsigned short)];
-				if (memcpy_s(ack_buffer, sizeof(ack_buffer), &received_sequence, sizeof(received_sequence)))
+				if (!memcpy(ack_buffer, &received_sequence, sizeof(received_sequence)))
 				{
 					std::string error_message = "[RUDP] (ERROR) [RECV] (SEQ-RECV: " + std::to_string(sequence_recv) + ") Error copying ACK sequence number received from " + endpoint_sender.address().to_string() + ":" + std::to_string(endpoint_sender.port()) + "\n";
 					std::cout << error_message;
@@ -367,7 +345,7 @@ int Connection::receive(char *buf, int len, char *address, int *port)
 				size_t sent_size = socket.send_to(boost::asio::buffer(ack_buffer, sizeof(ack_buffer)), endpoint_sender, 0, err);
 				if (err.value() != 0)
 				{
-					std::string error_message = "[RUDP] (ERROR) [RECV] (SEQ-RECV: " + std::to_string(sequence_recv) + ") Error in sending ACK to " + endpoint_sender.address().to_string() + ":" + std::to_string(endpoint_sender.port()) + " with error: " + err.what() + "\n";
+					std::string error_message = "[RUDP] (ERROR) [RECV] (SEQ-RECV: " + std::to_string(sequence_recv) + ") Error in sending ACK to " + endpoint_sender.address().to_string() + ":" + std::to_string(endpoint_sender.port()) + " with error: " + err.message() + "\n";
 					std::cout << error_message;
 					error_occured = true;
 				}

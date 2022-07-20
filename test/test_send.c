@@ -3,8 +3,8 @@
 #include "rudp.h"
 
 int main() {
-	errno_t error;
-	int connection_number = rudp_make_connection(5000, &error);
+	int error;
+	int connection_number = rudp_make_connection(2000, &error);
 	if (error) {
 		printf("Could not open connection.\n");
 		return error;
