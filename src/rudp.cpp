@@ -16,7 +16,7 @@
 
 using namespace rudp;
 
-int rudp_make_connection(int timeout_ms, errno_t *error)
+int rudp_make_connection(int timeout_ms, int *error)
 {
     try
     {
@@ -32,7 +32,7 @@ int rudp_make_connection(int timeout_ms, errno_t *error)
     }
 }
 
-void rudp_set_remote_endpoint(int connection, char *address, unsigned short port, errno_t *error)
+void rudp_set_remote_endpoint(int connection, char *address, unsigned short port, int *error)
 {
     try
     {
@@ -47,7 +47,7 @@ void rudp_set_remote_endpoint(int connection, char *address, unsigned short port
     }
 }
 
-void rudp_set_local_endpoint(int connection, unsigned short port, errno_t *error)
+void rudp_set_local_endpoint(int connection, unsigned short port, int *error)
 {
     try
     {
@@ -62,7 +62,7 @@ void rudp_set_local_endpoint(int connection, unsigned short port, errno_t *error
     }
 }
 
-void rudp_reset_connection_send(int connection, errno_t *error)
+void rudp_reset_connection_send(int connection, int *error)
 {
     try
     {
@@ -78,7 +78,7 @@ void rudp_reset_connection_send(int connection, errno_t *error)
     }
 }
 
-void rudp_reset_connection_receive(int connection, errno_t *error)
+void rudp_reset_connection_receive(int connection, int *error)
 {
     try
     {
@@ -94,7 +94,7 @@ void rudp_reset_connection_receive(int connection, errno_t *error)
     }
 }
 
-int rudp_send(int connection, const char *buf, int len, errno_t *error)
+int rudp_send(int connection, const char *buf, int len, int *error)
 {
     try
     {
@@ -110,7 +110,7 @@ int rudp_send(int connection, const char *buf, int len, errno_t *error)
     }
 }
 
-int rudp_receive(int connection, char *buf, int len, char *address_remote, int *port_remote, errno_t *error)
+int rudp_receive(int connection, char *buf, int len, char *address_remote, int *port_remote, int *error)
 {
     try
     {

@@ -24,6 +24,15 @@ Connection::Connection(int timeout_ms) : timeout_ms(timeout_ms)
 	sequence_send = 0;
 	has_endpoint_local = false;
 	has_endpoint_remote = false;
+
+	// No deadline is required until the first socket operation is started. We
+	// set the deadline to positive infinity so that the actor takes no action
+	// until a specific deadline is set.
+	timer.expires_at(boost::posix_time::pos_infin);
+
+	// Start the persistent actor that checks for deadline expiry.
+	check_deadline();
+
 	try
 	{
 		socket.open(boost::asio::ip::udp::v4());
@@ -56,7 +65,7 @@ void Connection::setEndpointLocal(unsigned short port)
 	}
 	catch (boost::system::system_error error)
 	{
-		std::string error_message = "[RUDP] (ERROR) [INIT] Error setting local endpoint to port " + std::to_string(port) +  ": " + error.what();
+		std::string error_message = "[RUDP] (ERROR) [INIT] Error setting local endpoint to port " + std::to_string(port) + ": " + error.what();
 		throw std::runtime_error(error_message);
 	}
 
@@ -116,17 +125,6 @@ int Connection::send(const char *buf, int len)
 
 		bool ack_received = false;
 
-		// Try setting the socket timeout to the one specified in the constructor.
-		try
-		{
-			socket.set_option(boost::asio::detail::socket_option::integer<SOL_SOCKET, SO_RCVTIMEO>{timeout_ms});
-		}
-		catch (boost::system::system_error error)
-		{
-			std::string error_message = std::string("[RUDP] (ERROR) [SEND] (SEQ-SEND: " + std::to_string(sequence_send) + ") Error setting receive timeout on socket: ") + error.what();
-			throw std::runtime_error(error_message);
-		}
-
 		// Write the input data to a stringstream to the string into a byte array.
 		bytestream.write(static_cast<char *>(static_cast<void *>(&sequence_send)), sizeof(sequence_send));
 		bytestream.write(static_cast<char *>(static_cast<void *>(&len)), sizeof(len));
@@ -144,7 +142,7 @@ int Connection::send(const char *buf, int len)
 			sent_size = socket.send_to(boost::asio::buffer(bytestream.str()), endpoint_remote, 0, err);
 			if (err.value() != 0)
 			{
-				std::string error_message = "[RUDP] (ERROR) [SEND] (SEQ-SEND: " + std::to_string(sequence_send) + ") Error in sending packet to " + endpoint_remote.address().to_string() + ":" + std::to_string(endpoint_remote.port()) + " with error: " + err.what() + "\n";
+				std::string error_message = "[RUDP] (ERROR) [SEND] (SEQ-SEND: " + std::to_string(sequence_send) + ") Error in sending packet to " + endpoint_remote.address().to_string() + ":" + std::to_string(endpoint_remote.port()) + " with error: " + err.message() + "\n";
 				throw std::runtime_error(error_message);
 			}
 #ifdef DEBUG
@@ -152,31 +150,52 @@ int Connection::send(const char *buf, int len)
 			std::cout << message;
 #endif
 
-			// Receive an ACK from the remote endpoint
+			// Set a deadline for the asynchronous operation.
+			timer.expires_from_now(boost::posix_time::milliseconds(timeout_ms));
+
+			// Set up the variables that receive the result of the asynchronous
+			// operation. The error code is set to would_block to signal that the
+			// operation is incomplete. Asio guarantees that its asynchronous
+			// operations will never fail with would_block, so any other value in
+			// ec indicates completion.
+			boost::system::error_code err = boost::asio::error::would_block;
+			std::size_t length = 0;
+
 			unsigned short received_sequence;
 			char *buffer = new char[sizeof(received_sequence)];
-			int packet_size = socket.receive_from(boost::asio::buffer(buffer, sizeof(buffer)), endpoint_remote, 0, err);
-			if (err.value() != 0 && err.value() != boost::asio::error::timed_out && err.value() != boost::asio::error::connection_reset)
-			{
-				std::string error_message = "[RUDP] (ERROR) [SEND] (SEQ-SEND: " + std::to_string(sequence_send) + ") Error receiving ACK from " + endpoint_remote.address().to_string() + ":" + std::to_string(endpoint_remote.port()) + " with error: " + err.what() + "\n";
-				throw std::runtime_error(error_message);
+			// Start the asynchronous operation itself. The handle_receive function
+			// used as a callback will update the ec and length variables.
+			socket.async_receive(boost::asio::buffer(buffer, sizeof(received_sequence)),
+								boost::bind(&Connection::handle_receive, 
+									this,
+									boost::asio::placeholders::error,
+									boost::asio::placeholders::bytes_transferred,
+									&err,
+									&length
+								)
+							);
+
+			// Block until the asynchronous operation has completed.
+			do {
+				timer_expired = false;
+				ack_packet_received = false;
+				io_service.run_one();
 			}
-			else if (
-				packet_size <= 0 ||
-				err.value() == boost::asio::error::timed_out ||
-				err.value() == boost::asio::error::connection_reset)
+			while (!timer_expired && !ack_packet_received);
+
+			if (length <= 0)
 			{
 				// If the socket timed out just send the packet again and wait for an ACK.
 				ack_received = false;
 #ifdef DEBUG
-				message = "[RUDP] (DEBUG) [SEND] (SEQ-SEND: " + std::to_string(sequence_send) + ") Error thrown when receiving ACK from " + endpoint_remote.address().to_string() + ":" + std::to_string(endpoint_remote.port()) + " with error: " + err.what() + "\n";
+				message = "[RUDP] (DEBUG) [SEND] (SEQ-SEND: " + std::to_string(sequence_send) + ") Timed out when receiving ACK from " + endpoint_remote.address().to_string() + ":" + std::to_string(endpoint_remote.port()) + "\n";
 				std::cout << message;
 #endif
 			}
 			else
 			{
 				// If no errors occured and the socket didn't timeout, try to compare the received sequence number to the current sequence number.
-				if (memcpy_s(&received_sequence, sizeof(received_sequence), buffer, sizeof(received_sequence)))
+				if (!memcpy(&received_sequence, buffer, sizeof(received_sequence)))
 				{
 					std::string error_message = "[RUDP] (ERROR) [SEND] (SEQ-SEND: " + std::to_string(sequence_send) + ") Error copying ACK sequence number received from " + endpoint_remote.address().to_string() + ":" + std::to_string(endpoint_remote.port()) + "\n";
 					std::cout << error_message;
@@ -220,17 +239,6 @@ int Connection::receive(char *buf, int len, char *address, int *port)
 		int received_len;
 		unsigned short received_sequence;
 
-		// Try setting the socket timeout to infinite.
-		try
-		{
-			socket.set_option(boost::asio::detail::socket_option::integer<SOL_SOCKET, SO_RCVTIMEO>{0});
-		}
-		catch (boost::system::system_error error)
-		{
-			std::string error_message = std::string("[RUDP] (ERROR) [RECV] Error setting receive timeout: ") + error.what();
-			throw std::runtime_error(error_message);
-		}
-
 		bool continue_receiving = true;
 
 		// While a message with the correct sequence number has not been received without errors.
@@ -243,7 +251,7 @@ int Connection::receive(char *buf, int len, char *address, int *port)
 			int packet_size = socket.receive_from(boost::asio::buffer(buffer, buffer.capacity()), endpoint_sender, 0, err);
 			if (err.value() != 0)
 			{
-				std::string error_message = "[RUDP] (ERROR) [RECV] (SEQ-RECV: Error in receiving packet from " + endpoint_sender.address().to_string() + ":" + std::to_string(endpoint_sender.port()) + " with error: " + err.what() + "\n";
+				std::string error_message = "[RUDP] (ERROR) [RECV] (SEQ-RECV: Error in receiving packet from " + endpoint_sender.address().to_string() + ":" + std::to_string(endpoint_sender.port()) + " with error: " + err.message() + "\n";
 				std::cout << error_message;
 				error_occured = true;
 			}
@@ -267,7 +275,7 @@ int Connection::receive(char *buf, int len, char *address, int *port)
 					char_cache[i] = buffer[i + offset];
 				}
 				offset += sizeof(received_sequence);
-				if (memcpy_s(&received_sequence, sizeof(received_sequence), char_cache.data(), sizeof(received_sequence)))
+				if (!memcpy(&received_sequence, char_cache.data(), sizeof(received_sequence)))
 				{
 					std::string error_message = "[RUDP] (ERROR) [RECV] (SEQ-RECV: " + std::to_string(sequence_recv) + ") Error copying message sequence number received from " + endpoint_sender.address().to_string() + ":" + std::to_string(endpoint_sender.port()) + "\n";
 					std::cout << error_message;
@@ -284,7 +292,7 @@ int Connection::receive(char *buf, int len, char *address, int *port)
 					char_cache[i] = buffer[i + offset];
 				}
 				offset += sizeof(int);
-				if (memcpy_s(&received_len, sizeof(received_len), char_cache.data(), sizeof(int)))
+				if (!memcpy(&received_len, char_cache.data(), sizeof(received_len)))
 				{
 					std::string error_message = "[RUDP] (ERROR) [RECV] (SEQ-RECV: " + std::to_string(sequence_recv) + ") Error copying length of message received from " + endpoint_sender.address().to_string() + ":" + std::to_string(endpoint_sender.port()) + "\n";
 					std::cout << error_message;
@@ -310,7 +318,7 @@ int Connection::receive(char *buf, int len, char *address, int *port)
 				}
 				offset += received_len;
 				// Copy the received data into the output buffer.
-				if (memcpy_s(buf, len, char_cache.data(), received_len))
+				if (!memcpy(buf, char_cache.data(), len))
 				{
 					std::string error_message = "[RUDP] (ERROR) [RECV] (SEQ-RECV: " + std::to_string(sequence_recv) + ") Error copying message buffer received from " + endpoint_sender.address().to_string() + ":" + std::to_string(endpoint_sender.port()) + "\n";
 					throw std::runtime_error(error_message);
@@ -321,14 +329,14 @@ int Connection::receive(char *buf, int len, char *address, int *port)
 			{
 				// Copy the information about where the packet came from.
 				*port = (int)endpoint_sender.port();
-				strcpy_s(address, IPV4_ADDRESS_LENGTH_BYTES, endpoint_sender.address().to_string().c_str());
+				strcpy(address, endpoint_sender.address().to_string().c_str());
 			}
 
 			// If no errors occured send an ACK for the message with the sequence number that was received.
 			if (!error_occured && received_sequence <= sequence_recv)
 			{
 				char *ack_buffer = new char[sizeof(unsigned short)];
-				if (memcpy_s(ack_buffer, sizeof(ack_buffer), &received_sequence, sizeof(received_sequence)))
+				if (!memcpy(ack_buffer, &received_sequence, sizeof(received_sequence)))
 				{
 					std::string error_message = "[RUDP] (ERROR) [RECV] (SEQ-RECV: " + std::to_string(sequence_recv) + ") Error copying ACK sequence number received from " + endpoint_sender.address().to_string() + ":" + std::to_string(endpoint_sender.port()) + "\n";
 					std::cout << error_message;
@@ -337,7 +345,7 @@ int Connection::receive(char *buf, int len, char *address, int *port)
 				size_t sent_size = socket.send_to(boost::asio::buffer(ack_buffer, sizeof(ack_buffer)), endpoint_sender, 0, err);
 				if (err.value() != 0)
 				{
-					std::string error_message = "[RUDP] (ERROR) [RECV] (SEQ-RECV: " + std::to_string(sequence_recv) + ") Error in sending ACK to " + endpoint_sender.address().to_string() + ":" + std::to_string(endpoint_sender.port()) + " with error: " + err.what() + "\n";
+					std::string error_message = "[RUDP] (ERROR) [RECV] (SEQ-RECV: " + std::to_string(sequence_recv) + ") Error in sending ACK to " + endpoint_sender.address().to_string() + ":" + std::to_string(endpoint_sender.port()) + " with error: " + err.message() + "\n";
 					std::cout << error_message;
 					error_occured = true;
 				}
@@ -354,6 +362,40 @@ int Connection::receive(char *buf, int len, char *address, int *port)
 		sequence_recv_map[sender_id] = (sequence_recv_map[sender_id] + 1) % USHRT_MAX;
 		return received_len;
 	}
+}
+
+void Connection::check_deadline()
+{
+	// Check whether the deadline has passed. We compare the deadline against
+	// the current time since a new asynchronous operation may have moved the
+	// deadline before this actor had a chance to run.
+	if (timer.expires_at() <= boost::asio::deadline_timer::traits_type::now())
+	{
+		// The deadline has passed. The outstanding asynchronous operation needs
+		// to be cancelled so that the blocked receive() function will return.
+		//
+		// Please note that cancel() has portability issues on some versions of
+		// Microsoft Windows, and it may be necessary to use close() instead.
+		// Consult the documentation for cancel() for further information.
+		// boost::system::error_code err = boost::asio::error::operation_aborted;
+		socket.cancel();
+
+		// There is no longer an active deadline. The expiry is set to positive
+		// infinity so that the actor takes no action until a new deadline is set.
+		timer.expires_at(boost::posix_time::pos_infin);
+		timer_expired = true;
+	}
+
+	// Put the actor back to sleep.
+	timer.async_wait(boost::bind(&Connection::check_deadline, this));
+}
+
+void Connection::handle_receive(const boost::system::error_code &err, std::size_t length, boost::system::error_code *err_out, std::size_t *length_out)
+{
+	*err_out = err;
+	*length_out = length;
+	if (!err)
+		ack_packet_received = true;
 }
 
 #endif /* CONNECTION_CPP */

@@ -15,6 +15,7 @@
 
 // Standard Libraries
 #include <array>
+#include <chrono>
 #include <iostream>
 #include <map>
 #include <mutex>
@@ -23,6 +24,7 @@
 
 // Boost networking libraries
 #include <boost/asio.hpp>
+#include <boost/bind/bind.hpp>
 
 // Library macros header
 #include "rudp_macros.h"
@@ -58,6 +60,14 @@ namespace rudp
         bool has_endpoint_local;
         /// Flag for if the remote endpoint has been set.
         bool has_endpoint_remote;
+
+        boost::asio::deadline_timer timer{io_service};
+
+        bool timer_expired;
+        bool ack_packet_received;
+        void check_deadline();
+
+        void handle_receive(const boost::system::error_code &err, std::size_t length, boost::system::error_code *err_out, std::size_t *length_out);
 
     public:
         /**

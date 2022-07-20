@@ -5,7 +5,7 @@
 #include "rudp.h"
 
 int main() {
-	errno_t error;
+	int error;
 	int connection_number = rudp_make_connection(DEFAULT_TIMEOUT_MS, &error);
 	if (error) {
 		printf("Could not open connection.\n");
@@ -28,6 +28,5 @@ int main() {
 	char *message = malloc(received_size + 1);
 	memcpy(message, buffer, received_size);
 	message[received_size] = '\0';
-	printf("Received packet on port 23000 from %s:%d\n", address, port, message);
 	printf("Received packet on port 23000 from %s:%d with data: %s\n", address, port, message);
 }
