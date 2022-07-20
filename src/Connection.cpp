@@ -162,7 +162,7 @@ int Connection::send(const char *buf, int len)
 #endif
 
 			// Set a deadline for the asynchronous operation.
-			// timer.expires_from_now(boost::posix_time::milliseconds(timeout_ms));
+			timer.expires_from_now(boost::posix_time::milliseconds(timeout_ms));
 
 			// Set up the variables that receive the result of the asynchronous
 			// operation. The error code is set to would_block to signal that the
@@ -171,7 +171,6 @@ int Connection::send(const char *buf, int len)
 			// ec indicates completion.
 			boost::system::error_code err = boost::asio::error::would_block;
 			std::size_t length = 0;
-			bool cancelled = false;
 
 			unsigned short received_sequence;
 			char *buffer = new char[sizeof(received_sequence)];
@@ -188,21 +187,21 @@ int Connection::send(const char *buf, int len)
 							);
 
 			// Block until the asynchronous operation has completed.
-			// do
-			// 	io_service.run_one();
-			// while (!cancelled);
+			do {
+				timer_expired = false;
+				ack_packet_received = false;
+				io_service.run_one();
+			}
+			while (!timer_expired && !ack_packet_received);
 
-			io_service.restart();
-			io_service.run_until(std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms));
-			// std::cout << io_service.stopped() << std::endl;
 			if (length <= 0)
 			{
 				// If the socket timed out just send the packet again and wait for an ACK.
 				ack_received = false;
-// #ifdef DEBUG
-// 				message = "[RUDP] (DEBUG) [SEND] (SEQ-SEND: " + std::to_string(sequence_send) + ") Error thrown when receiving ACK from " + endpoint_remote.address().to_string() + ":" + std::to_string(endpoint_remote.port()) + " with error: " + err.what() + "\n";
-// 				std::cout << message;
-// #endif
+#ifdef DEBUG
+				message = "[RUDP] (DEBUG) [SEND] (SEQ-SEND: " + std::to_string(sequence_send) + ") Timed out when receiving ACK from " + endpoint_remote.address().to_string() + ":" + std::to_string(endpoint_remote.port()) + "\n";
+				std::cout << message;
+#endif
 			}
 			else
 			{
@@ -406,6 +405,7 @@ void Connection::check_deadline()
 		// There is no longer an active deadline. The expiry is set to positive
 		// infinity so that the actor takes no action until a new deadline is set.
 		timer.expires_at(boost::posix_time::pos_infin);
+		timer_expired = true;
 	}
 
 	// Put the actor back to sleep.
@@ -416,7 +416,8 @@ void Connection::handle_receive(const boost::system::error_code &err, std::size_
 {
 	*err_out = err;
 	*length_out = length;
-	io_service.stop();
+	if (!err)
+		ack_packet_received = true;
 }
 
 #endif /* CONNECTION_CPP */

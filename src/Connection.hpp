@@ -63,6 +63,8 @@ namespace rudp
 
         boost::asio::deadline_timer timer{io_service};
 
+        bool timer_expired;
+        bool ack_packet_received;
         void check_deadline();
 
         void handle_receive(const boost::system::error_code &err, std::size_t length, boost::system::error_code *err_out, std::size_t *length_out);
