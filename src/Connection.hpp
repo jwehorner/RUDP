@@ -41,8 +41,6 @@ namespace rudp
     private:
         /// Mutex for thread synchronization.
         std::mutex io_mutex;
-        /// Timeout after which the connection will retransmit a message.
-        int timeout_ms;
         /// Sequence number of the message that the connection is currently sending.
         uint16_t sequence_send;
         /// Map of senders to their receive sequence numbers.
@@ -61,12 +59,32 @@ namespace rudp
         /// Flag for if the remote endpoint has been set.
         bool has_endpoint_remote;
 
+        /// Timeout after which the connection will retransmit a message.
+        int timeout_ms;
+		/// Timer for ACK timeouts.
         boost::asio::deadline_timer timer{io_service};
-
+		/// Flag for if the timer has expired.
         bool timer_expired;
+		/// Flag for if an ACK packet has been received (not if the ACK is valid) 
         bool ack_packet_received;
+
+		/**
+		 * @brief 	Method check_deadline is for use in checking the ACK timeout timer deadline.
+		 * @details Upon completion of the timer, the timeout will be set to inifity and the timer_expired 
+		 * 			flag will be set.
+		 */
         void check_deadline();
 
+		/**
+		 * @brief 				Method handle_receive is for use in receiving ACKs after sending a packet.
+		 * @details 			The method is called when a packet is received, at which point it returns 
+		 * 						the size of the packet and any errors through output arguments. If a packet 
+		 * 						is successfully received, the method will set the ack_packet_received flag.
+		 * @param err 			[in]	error_code passed to the method by boost when a packet is received.
+		 * @param length 		[in]	size_t passed to the method by boost when a packet is received.
+		 * @param err_out 		[out]	error_code set by the method when a packet is received.
+		 * @param length_out	[out]	size_t set by the method when a packet is received.
+		 */
         void handle_receive(const boost::system::error_code &err, std::size_t length, boost::system::error_code *err_out, std::size_t *length_out);
 
     public:

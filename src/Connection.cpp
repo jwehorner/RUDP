@@ -155,9 +155,7 @@ int Connection::send(const char *buf, int len)
 
 			// Set up the variables that receive the result of the asynchronous
 			// operation. The error code is set to would_block to signal that the
-			// operation is incomplete. Asio guarantees that its asynchronous
-			// operations will never fail with would_block, so any other value in
-			// ec indicates completion.
+			// operation is incomplete.
 			boost::system::error_code err = boost::asio::error::would_block;
 			std::size_t length = 0;
 
@@ -366,34 +364,27 @@ int Connection::receive(char *buf, int len, char *address, int *port)
 
 void Connection::check_deadline()
 {
-	// Check whether the deadline has passed. We compare the deadline against
-	// the current time since a new asynchronous operation may have moved the
-	// deadline before this actor had a chance to run.
+	// Check whether the deadline has passed. 
 	if (timer.expires_at() <= boost::asio::deadline_timer::traits_type::now())
 	{
-		// The deadline has passed. The outstanding asynchronous operation needs
-		// to be cancelled so that the blocked receive() function will return.
-		//
-		// Please note that cancel() has portability issues on some versions of
-		// Microsoft Windows, and it may be necessary to use close() instead.
-		// Consult the documentation for cancel() for further information.
-		// boost::system::error_code err = boost::asio::error::operation_aborted;
+		// Cancel the socket operation as the ACK has not been received in time.
 		socket.cancel();
 
-		// There is no longer an active deadline. The expiry is set to positive
-		// infinity so that the actor takes no action until a new deadline is set.
+		// Set the timer expiry to infinity and set the expired flag.
 		timer.expires_at(boost::posix_time::pos_infin);
 		timer_expired = true;
 	}
 
-	// Put the actor back to sleep.
+	// Put the timer back to sleep.
 	timer.async_wait(boost::bind(&Connection::check_deadline, this));
 }
 
 void Connection::handle_receive(const boost::system::error_code &err, std::size_t length, boost::system::error_code *err_out, std::size_t *length_out)
 {
+	// Set the output arguments.
 	*err_out = err;
 	*length_out = length;
+	// If there are no errors, an ACK was successfully received.
 	if (!err)
 		ack_packet_received = true;
 }
