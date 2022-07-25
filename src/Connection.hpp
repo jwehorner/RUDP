@@ -68,6 +68,9 @@ namespace rudp
 		/// Flag for if an ACK packet has been received (not if the ACK is valid) 
         bool ack_packet_received;
 
+        int send_retries_limit;
+        int send_retries;
+
 		/**
 		 * @brief 	Method check_deadline is for use in checking the ACK timeout timer deadline.
 		 * @details Upon completion of the timer, the timeout will be set to inifity and the timer_expired 
@@ -126,6 +129,13 @@ namespace rudp
          * @note            This method resets the sequence number for sending packets.  
          */
         void setEndpointRemote(std::string address, unsigned short port);
+
+        /**
+         * @brief                       Method setSendRetriesLimit sets the maximum number times the connection will attempt 
+         *                              to send a packet before the send is aborted.
+         * @param send_retries_limit    int maximum number of retries before the connection is aborted.
+         */
+        void setSendRetriesLimit(int send_retries_limit);
 
         /**
          * @brief Method resetConnectionReceive resets the sequence number of all the receive channels.
