@@ -43,6 +43,15 @@ extern "C"
 	void rudp_set_local_endpoint(int connection, unsigned short port, int *error);
 
 	/**
+	 * @brief                       Function rudp_set_send_retries_limit sets the maximum number times the connection will attempt
+	 *                              to send a packet before the send is aborted.
+	 * @param connection			[in]	int ID of the connection.
+	 * @param send_retries_limit    [in]	int maximum number of retries before the connection is aborted.
+	 * @param error					[out]	int * to hold any errors that occur, 0 if none.
+	 */
+	void rudp_set_send_retries_limit(int connection, int send_retries_limit, int *error);
+
+	/**
 	 * @brief 				Function rudp_reset_connection_send resets the sequence number of the send channel to 0.
 	 * @param connection	[in]	int ID of the connection.
 	 * @param error			[out]	int * to hold any errors that occur, 0 if none.

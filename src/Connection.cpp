@@ -24,6 +24,8 @@ Connection::Connection(int timeout_ms) : timeout_ms(timeout_ms)
 	sequence_send = 0;
 	has_endpoint_local = false;
 	has_endpoint_remote = false;
+	send_retries_limit = -1;
+	send_retries = 0;
 
 	// No deadline is required until the first socket operation is started. We
 	// set the deadline to positive infinity so that the actor takes no action
@@ -53,14 +55,15 @@ Connection::~Connection()
 
 void Connection::setEndpointLocal(unsigned short port)
 {
-	// Gain access to the mutex then try to set the local endpoint and bind the socket to it.
-	// Also, reset the receive sequence as a new connection is being set up.
-	std::lock_guard<std::mutex> lock(io_mutex);
 	try
 	{
+		// Gain access to the mutex then try to set the local endpoint and bind the socket to it.
+		// Also, reset the receive sequence as a new connection is being set up.
+		std::unique_lock<std::mutex> lock(io_mutex);
 		endpoint_local = boost::asio::ip::udp::endpoint(boost::asio::ip::address_v4::any(), port);
 		socket.bind(endpoint_local);
 		has_endpoint_local = true;
+		lock.unlock();
 		resetConnectionReceive();
 	}
 	catch (boost::system::system_error error)
@@ -77,13 +80,14 @@ void Connection::setEndpointLocal(unsigned short port)
 
 void Connection::setEndpointRemote(std::string address, unsigned short port)
 {
-	// Gain access to the mutex then try to set the remote endpoint.
-	// Also, reset the send sequence as a new connection is being set up.
-	std::lock_guard<std::mutex> lock(io_mutex);
 	try
 	{
+		// Gain access to the mutex then try to set the remote endpoint.
+		// Also, reset the send sequence as a new connection is being set up.
+		std::unique_lock<std::mutex> lock(io_mutex);
 		endpoint_remote = boost::asio::ip::udp::endpoint(boost::asio::ip::address::from_string(address), port);
 		has_endpoint_remote = true;
+		lock.unlock();
 		resetConnectionSend();
 	}
 	catch (boost::system::system_error error)
@@ -98,13 +102,33 @@ void Connection::setEndpointRemote(std::string address, unsigned short port)
 #endif
 }
 
+void Connection::setSendRetriesLimit(int send_retries_limit)
+{
+	std::lock_guard<std::mutex> lock(io_mutex);
+	if (send_retries_limit > 0)
+	{
+		this->send_retries_limit = send_retries_limit;
+	}
+	else 
+	{
+		std::string error_message = std::string("[RUDP] (ERROR) [INIT] Error setting send retries limit: cannot be a negative number.");
+		throw std::runtime_error(error_message);
+	}
+#ifdef DEBUG
+	std::string message = "[RUDP] (DEBUG) [INIT] Send retries limit set: " + std::to_string(send_retries_limit) + "\n";
+	std::cout << message;
+#endif
+}
+
 void Connection::resetConnectionReceive()
 {
+	std::lock_guard<std::mutex> lock(io_mutex);
 	sequence_recv_map.clear();
 }
 
 void Connection::resetConnectionSend()
 {
+	std::lock_guard<std::mutex> lock(io_mutex);
 	sequence_send = 0;
 }
 
@@ -119,6 +143,8 @@ int Connection::send(const char *buf, int len)
 	}
 	else
 	{
+		send_retries = 0;
+
 		boost::system::error_code err;
 		size_t sent_size;
 		std::ostringstream bytestream = std::ostringstream();
@@ -136,13 +162,15 @@ int Connection::send(const char *buf, int len)
 		}
 
 		// While a valid ACK has not been received,
-		while (!ack_received)
+		while (!ack_received && (send_retries_limit == -1 || send_retries < send_retries_limit))
 		{
+			++send_retries;
 			// Transmit the data to the remote endpoint
 			sent_size = socket.send_to(boost::asio::buffer(bytestream.str()), endpoint_remote, 0, err);
 			if (err.value() != 0)
 			{
 				std::string error_message = "[RUDP] (ERROR) [SEND] (SEQ-SEND: " + std::to_string(sequence_send) + ") Error in sending packet to " + endpoint_remote.address().to_string() + ":" + std::to_string(endpoint_remote.port()) + " with error: " + err.message() + "\n";
+				send_retries = 0;
 				throw std::runtime_error(error_message);
 			}
 #ifdef DEBUG
@@ -164,22 +192,20 @@ int Connection::send(const char *buf, int len)
 			// Start the asynchronous operation itself. The handle_receive function
 			// used as a callback will update the ec and length variables.
 			socket.async_receive(boost::asio::buffer(buffer, sizeof(received_sequence)),
-								boost::bind(&Connection::handle_receive, 
-									this,
-									boost::asio::placeholders::error,
-									boost::asio::placeholders::bytes_transferred,
-									&err,
-									&length
-								)
-							);
+								 boost::bind(&Connection::handle_receive,
+											 this,
+											 boost::asio::placeholders::error,
+											 boost::asio::placeholders::bytes_transferred,
+											 &err,
+											 &length));
 
 			// Block until the asynchronous operation has completed.
-			do {
+			do
+			{
 				timer_expired = false;
 				ack_packet_received = false;
 				io_service.run_one();
-			}
-			while (!timer_expired && !ack_packet_received);
+			} while (!timer_expired && !ack_packet_received);
 
 			if (length <= 0)
 			{
@@ -209,9 +235,19 @@ int Connection::send(const char *buf, int len)
 #endif
 			}
 		}
-		// Once a successful ACK has been received increment the send sequence number.
-		sequence_send = (sequence_send + 1) % USHRT_MAX;
-		return sent_size;
+		if (send_retries_limit != -1 && send_retries >= send_retries_limit)
+		{
+			std::string error_message = "[RUDP] (ERROR) [SEND] (SEQ-SEND: " + std::to_string(sequence_send) + ") Error sending packet to " + endpoint_remote.address().to_string() + ":" + std::to_string(endpoint_remote.port()) + " after " + std::to_string(send_retries) + " tries.\n";
+			send_retries = 0;
+			throw std::runtime_error(error_message);
+		}
+		else
+		{
+			// Once a successful ACK has been received increment the send sequence number.
+			sequence_send = (sequence_send + 1) % USHRT_MAX;
+			send_retries = 0;
+			return sent_size;
+		}
 	}
 }
 
@@ -364,7 +400,7 @@ int Connection::receive(char *buf, int len, char *address, int *port)
 
 void Connection::check_deadline()
 {
-	// Check whether the deadline has passed. 
+	// Check whether the deadline has passed.
 	if (timer.expires_at() <= boost::asio::deadline_timer::traits_type::now())
 	{
 		// Cancel the socket operation as the ACK has not been received in time.

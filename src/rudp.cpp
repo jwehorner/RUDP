@@ -62,6 +62,21 @@ void rudp_set_local_endpoint(int connection, unsigned short port, int *error)
     }
 }
 
+void rudp_set_send_retries_limit(int connection, int send_retries_limit, int *error)
+{
+    try
+    {
+        ConnectionController::getInstance()->getConnection(connection)->setSendRetriesLimit(send_retries_limit);
+        return;
+    }
+    catch (std::runtime_error runtime_error)
+    {
+        std::cout << runtime_error.what() << std::endl;
+        *error = -1;
+        return;
+    }
+}
+
 void rudp_reset_connection_send(int connection, int *error)
 {
     try
