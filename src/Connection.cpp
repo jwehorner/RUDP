@@ -109,7 +109,7 @@ void Connection::setSendRetriesLimit(int send_retries_limit)
 	{
 		this->send_retries_limit = send_retries_limit;
 	}
-	else 
+	else
 	{
 		std::string error_message = std::string("[RUDP] (ERROR) [INIT] Error setting send retries limit: cannot be a negative number.");
 		throw std::runtime_error(error_message);
@@ -315,6 +315,18 @@ int Connection::receive(char *buf, int len, char *address, int *port)
 					std::cout << error_message;
 					error_occured = true;
 				}
+			}
+
+			// If the received sequence number is greater than the current, fast forward to the received.
+			// This assumes that the receiver has been reset in the time that the sender has been active.
+			if (!error_occured && received_sequence > sequence_recv)
+			{
+#ifdef DEBUG
+				message = "[RUDP] (DEBUG) [RECV] (SEQ-RECV: " + std::to_string(sequence_recv) + ") Received sequence ahead of current sequence number from " + endpoint_sender.address().to_string() + ":" + std::to_string(endpoint_sender.port()) + " fast forwarding from " + std::to_string(sequence_recv) + " to " + std::to_string(received_sequence) + "\n";
+				std::cout << message;
+#endif
+				sequence_recv = received_sequence;
+				sequence_recv_map[sender_id] = received_sequence;
 			}
 
 			if (!error_occured && received_sequence == sequence_recv)
